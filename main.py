@@ -1,10 +1,11 @@
-# main.py — 영화 유형 나누기: 정답 없이 비슷한 영화끼리 묶는다
+# main.py — 영화 유형 나누기: 속성을 골라 묶고, 묶음 수도 바꿔 가며 정한다
 import streamlit as st
 import numpy as np
 import pandas as pd
 import plotly.express as px
 from sklearn.preprocessing import StandardScaler
 from sklearn.cluster import KMeans
+from sklearn.metrics import silhouette_score
 
 st.set_page_config(page_title="영화 유형 나누기", page_icon="🎬", layout="wide")
 st.title("🎬 영화 유형 나누기")
@@ -46,10 +47,17 @@ if len(고른속성) < 2:
     st.warning("속성을 둘 이상 골라 주세요.")
     st.stop()
 
-# 고른 속성을 표준화한 뒤 k-평균으로 나눈다. 난수를 고정해 다시 실행해도 같은 결과가 나오게 한다
-k = 3
-Xs = StandardScaler().fit_transform(df[고른속성])
-번호 = KMeans(n_clusters=k, n_init=10, random_state=42).fit_predict(Xs)
+Xs = StandardScaler().fit_transform(df[고른속성])          # 고른 속성을 표준화한다
+k = st.slider("몇 묶음으로 나눌까요", 2, 7, 3)
+
+
+def 나누기(개수):
+    """표준화한 값을 k-평균으로 나눈다. 난수를 고정해 다시 실행해도 결과가 같다."""
+    return KMeans(n_clusters=개수, n_init=10, random_state=42).fit(Xs)
+
+
+모델 = 나누기(k)
+번호 = 모델.labels_
 
 # 누적 관객 평균이 큰 묶음부터 ㉮·㉯·㉰ 순으로 표시한다
 순서 = pd.Series(df["누적 관객"].to_numpy()).groupby(번호).mean().sort_values(ascending=False).index
@@ -104,3 +112,26 @@ for i, 이름 in enumerate(기호[:k]):
                                 "누적 관객": 묶음["누적 관객"].to_numpy()}),
                    width="stretch", hide_index=True,
                    column_config={"누적 관객": st.column_config.NumberColumn("누적 관객", format="%,d명")})
+
+# 여기부터 ③ — 묶음 수를 몇으로 할지 정하는 화면
+st.divider()
+st.subheader("묶음 수는 몇이 좋을까")
+
+# 고른 속성으로 다시 계산한다. 묶음 안에서 점들이 중심에서 떨어진 거리의 제곱을 모두 더한 값(k=1~7)
+합 = pd.DataFrame({"묶음 수": list(range(1, 8)),
+                   "거리 제곱의 합": [round(float(나누기(개수).inertia_), 1) for 개수 in range(1, 8)]})
+# 바로 앞 묶음 수에서 줄어든 크기. 맨 첫 줄은 비교할 앞 값이 없다
+합["앞보다 줄어든 값"] = ["—" if pd.isna(v) else f"{v:,.1f}" for v in -합["거리 제곱의 합"].diff()]
+
+꺾은선 = px.line(합, x="묶음 수", y="거리 제곱의 합", markers=True)
+꺾은선.add_vline(x=k, line_dash="dash", annotation_text=f"지금 고른 묶음 수 {k}")
+꺾은선.update_layout(height=380, xaxis_title="묶음 수(k)", yaxis_title="묶음 안 거리 제곱의 합")
+st.plotly_chart(꺾은선, width="stretch")
+st.caption("묶음 수를 늘리면 값은 반드시 줄어듭니다. 줄어드는 폭이 크게 꺾이는 자리를 찾습니다.")
+
+st.dataframe(합, width="stretch", hide_index=True)
+
+점수 = silhouette_score(Xs, 번호)
+st.metric(f"묶음 {k}개일 때의 실루엣 점수", f"{점수:.3f}")
+st.caption("실루엣 점수는 -1에서 1 사이이고, 1에 가까울수록 묶음이 뚜렷하다는 뜻입니다. "
+           "점수가 가장 높은 묶음 수와 사람이 이해하기 좋은 묶음 수가 늘 같지는 않습니다.")
